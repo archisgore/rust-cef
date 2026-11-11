@@ -1,6 +1,6 @@
 [package]
 name = "rust-cef-derive"
-version = "0.2.8"
+version = "0.2.9"
 edition = "2018"
 license = "Apache-2.0"
 readme = "README.md"
@@ -24,7 +24,7 @@ lazy_static = "1.5.1"
 inflections = "1.1.1"
 
 # Always keep this in sync within the repo
-rust-cef = { version = "0.2.8", path = ".." }
+rust-cef = { version = "0.2.9", path = ".." }
 
 [[test]]
 name = "tests"

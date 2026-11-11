@@ -40,13 +40,16 @@ pub type CefResult = Result<String, CefConversionError>;
 // provides proper context vs doing Option
 pub type CefExtensionsResult = Result<(), CefConversionError>;
 
-/// Escapes a value for use in a CEF header field: `\` becomes `\\` and `|` becomes `\|`.
+/// Escapes a value for use in a CEF header field: `\` becomes `\\`, `|` becomes `\|`,
+/// and newline / carriage return become the two-character sequences `\n` / `\r`.
 pub fn escape_header(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
         match c {
             '\\' => out.push_str("\\\\"),
             '|' => out.push_str("\\|"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
             _ => out.push(c),
         }
     }
@@ -387,6 +390,56 @@ mod test {
     }
 
     #[test]
+    fn test_header_newline_escaping() {
+        struct NlExample {}
+        impl ToCef for NlExample {}
+        impl CefHeaderVersion for NlExample {
+            fn cef_header_version(&self) -> CefResult {
+                Ok("0".to_owned())
+            }
+        }
+        impl CefHeaderDeviceVendor for NlExample {
+            fn cef_header_device_vendor(&self) -> CefResult {
+                Ok("v\nCEF:0|forged".to_owned())
+            }
+        }
+        impl CefHeaderDeviceProduct for NlExample {
+            fn cef_header_device_product(&self) -> CefResult {
+                Ok("p\rq".to_owned())
+            }
+        }
+        impl CefHeaderDeviceVersion for NlExample {
+            fn cef_header_device_version(&self) -> CefResult {
+                Ok("1".to_owned())
+            }
+        }
+        impl CefHeaderDeviceEventClassID for NlExample {
+            fn cef_header_device_event_class_id(&self) -> CefResult {
+                Ok("id".to_owned())
+            }
+        }
+        impl CefHeaderName for NlExample {
+            fn cef_header_name(&self) -> CefResult {
+                Ok("n".to_owned())
+            }
+        }
+        impl CefHeaderSeverity for NlExample {
+            fn cef_header_severity(&self) -> CefResult {
+                Ok("1".to_owned())
+            }
+        }
+        impl CefExtensions for NlExample {
+            fn cef_extensions(&self, _: &mut HashMap<String, String>) -> CefExtensionsResult {
+                Ok(())
+            }
+        }
+        assert_eq!(
+            NlExample {}.to_cef().unwrap(),
+            "CEF:0|v\\nCEF:0\\|forged|p\\rq|1|id|n|1|"
+        );
+    }
+
+    #[test]
     fn test_extension_escaping() {
         let result = EscapeExample {}.to_cef().unwrap();
         let ext = result.rsplit_once("|10|").unwrap().1;
@@ -399,6 +452,7 @@ mod test {
     #[test]
     fn test_escape_helpers() {
         assert_eq!(escape_header("a|b\\c"), "a\\|b\\\\c");
+        assert_eq!(escape_header("l1\nl2\rl3"), "l1\\nl2\\rl3");
         assert_eq!(escape_extension_value("a=b\\c\n\r|"), "a\\=b\\\\c\\n\\r|");
     }
 }
