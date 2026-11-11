@@ -1,8 +1,12 @@
 use crate::proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use std::convert::From;
+use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
-use syn::{Attribute, Data, DeriveInput, Error as SynError, Meta, MetaNameValue, NestedMeta};
+use syn::{
+    Attribute, Data, DeriveInput, Error as SynError, Expr, ExprLit, Lit, LitStr, Meta,
+    MetaNameValue, Token,
+};
 
 pub const CEF_ATTRIBUTE_APPLICATION: &str = "This attribute only applies to Structs or Enums.";
 
@@ -29,12 +33,14 @@ pub fn parse_attrs_to_name_value(
 ) -> ParseAttrResult<Vec<MetaNameValue>> {
     let mut mnvs: Vec<MetaNameValue> = vec![];
 
-    match attr.parse_meta() {
-        Err(e) => return Err(e.to_compile_error()),
-        Ok(Meta::List(list)) => {
-            for nestedmeta in list.nested {
+    match &attr.meta {
+        Meta::List(_) => {
+            let nested = attr
+                .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+                .map_err(|e| e.to_compile_error())?;
+            for nestedmeta in nested {
                 match nestedmeta {
-                    NestedMeta::Meta(Meta::NameValue(mnv)) => {
+                    Meta::NameValue(mnv) => {
                         mnvs.push(mnv);
                     }
                     _ => {
@@ -45,8 +51,19 @@ pub fn parse_attrs_to_name_value(
                 }
             }
         }
-        Ok(_) => return Err(SynError::new(attr.span(), message.to_owned()).to_compile_error()),
+        _ => return Err(SynError::new(attr.span(), message.to_owned()).to_compile_error()),
     }
 
     Ok(mnvs)
+}
+
+/// Returns the string literal if the expression is one (e.g. the `"value"` in `Name = "value"`).
+pub fn expr_to_lit_str(expr: &Expr) -> Option<&LitStr> {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(strval),
+            ..
+        }) => Some(strval),
+        _ => None,
+    }
 }

@@ -100,9 +100,7 @@ pub trait ToCef:
         let mut extensions: HashMap<String, String> = HashMap::new();
 
         // get our extensions
-        if let Err(err) = self.cef_extensions(&mut extensions) {
-            return Err(err);
-        };
+        self.cef_extensions(&mut extensions)?;
 
         // make it into key=value strings
         let mut kvstrs: Vec<String> = extensions

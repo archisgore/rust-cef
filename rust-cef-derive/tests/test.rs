@@ -52,10 +52,7 @@ fn test_cef_extensions() {
     };
     let mut collector = HashMap::<String, String>::new();
     assert!(n1.cef_extensions(&mut collector).is_ok());
-    assert_eq!(
-        collector.get(&"newname".to_owned()),
-        Some(&"WillBeRenamed".to_owned())
-    );
+    assert_eq!(collector.get("newname"), Some(&"WillBeRenamed".to_owned()));
     // Header implementation still works
     assert_eq!(n1.cef_header_name().unwrap(), "WillBeRenamed");
 
@@ -72,22 +69,13 @@ fn test_cef_extensions() {
 
     let mut collector = HashMap::<String, String>::new();
     assert!(n2.cef_extensions(&mut collector).is_ok());
+    assert_eq!(collector.get("newname"), Some(&"NS2".to_owned()));
     assert_eq!(
-        collector.get(&"newname".to_owned()),
-        Some(&"NS2".to_owned())
-    );
-    assert_eq!(
-        collector.get(&"address".to_owned()),
+        collector.get("address"),
         Some(&"An address of some sort".to_owned())
     );
-    assert_eq!(
-        collector.get(&"name2".to_owned()),
-        Some(&"NameStruct::NS1".to_owned())
-    );
-    assert_eq!(
-        collector.get(&"person_age".to_owned()),
-        Some(&"42".to_owned())
-    );
+    assert_eq!(collector.get("name2"), Some(&"NameStruct::NS1".to_owned()));
+    assert_eq!(collector.get("person_age"), Some(&"42".to_owned()));
 }
 
 #[test]
@@ -286,6 +274,7 @@ enum Top {
 }
 
 #[derive(CefHeaderName)]
+#[allow(dead_code)]
 struct TupleStule(#[cef_inherit(CefHeaderName)] NameStruct);
 
 #[derive(CefHeaderName, CefExtensions)]

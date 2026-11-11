@@ -2,15 +2,17 @@
 ///
 /// This module provides functions to implement the CefExtensions trait
 use crate::helpers::{
-    is_valid_item_type, parse_attrs_to_name_value, ParseAttrResult, CEF_ATTRIBUTE_APPLICATION,
+    expr_to_lit_str, is_valid_item_type, parse_attrs_to_name_value, ParseAttrResult,
+    CEF_ATTRIBUTE_APPLICATION,
 };
 use crate::proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use std::convert::From;
+use syn::punctuated::Punctuated;
 use syn::{
     parse_macro_input, spanned::Spanned, Attribute, Data, DataEnum, DataStruct, DeriveInput,
-    Error as SynError, Fields, Ident, Index, Lit, Meta, NestedMeta, Type, Variant,
+    Error as SynError, Fields, Ident, Index, Meta, Token, Type, Variant,
 };
 
 const CEF_EXT_VALUES_APPLICABLE: &str =
@@ -453,23 +455,23 @@ fn destructure_and_match_variant(variant: &Variant) -> OptionalCompileResult {
                     ),
                 };
 
-                let (final_fieldid, extraction) = match field_extraction(
-                    &f.attrs,
-                    FieldIdentity::Ident(fieldid.clone()),
-                    field_name_from_id,
-                    &f.ty,
-                    &PrefixSelf::No,
-                    f.span(),
-                ) {
-                    Err(ts) => return Err(ts),
-                    Ok(maybe_ext) => match maybe_ext {
+                let (final_fieldid, extraction) = {
+                    let maybe_ext = field_extraction(
+                        &f.attrs,
+                        FieldIdentity::Ident(fieldid.clone()),
+                        field_name_from_id,
+                        &f.ty,
+                        &PrefixSelf::No,
+                        f.span(),
+                    )?;
+                    match maybe_ext {
                         Some(ext) => (quote! {#fieldid}, ext),
 
                         // No extraction for this field
                         // first, capture fieldid as "_" to ignore it (good practice)
                         // and give it an empty extraction
                         None => (quote! {#ignore_prefix _}, quote! {}),
-                    },
+                    }
                 };
 
                 Ok((final_fieldid, extraction))
@@ -477,9 +479,9 @@ fn destructure_and_match_variant(variant: &Variant) -> OptionalCompileResult {
         )
         .collect();
 
-    let (field_captures, field_extractions): (Vec<_>, Vec<_>) = match field_extractions_result {
-        Err(ts) => return Err(ts),
-        Ok(fc) => fc.iter().cloned().unzip(),
+    let (field_captures, field_extractions): (Vec<_>, Vec<_>) = {
+        let fc = field_extractions_result?;
+        fc.iter().cloned().unzip()
     };
 
     // Named fields (aka Struct variant) is wrapped with {},
@@ -527,9 +529,9 @@ fn field_extraction(
 ) -> Result<Option<TokenStream2>, TokenStream2> {
     // look for field attributes
     let values_for_field_result: CollectedCompileResult = attrs.iter()
-        .filter(|attr| attr.path.is_ident("cef_ext_gobble") || attr.path.is_ident("cef_ext_optional_gobble") || attr.path.is_ident("cef_ext_field") || attr.path.is_ident("cef_ext_optional_field") || attr.path.is_ident("cef_ext_gobble_kv_iterator") || attr.path.is_ident("cef_ext_optional_gobble_kv_iterator") || attr.path.is_ident("cef_ext_values"))
+        .filter(|attr| attr.path().is_ident("cef_ext_gobble") || attr.path().is_ident("cef_ext_optional_gobble") || attr.path().is_ident("cef_ext_field") || attr.path().is_ident("cef_ext_optional_field") || attr.path().is_ident("cef_ext_gobble_kv_iterator") || attr.path().is_ident("cef_ext_optional_gobble_kv_iterator") || attr.path().is_ident("cef_ext_values"))
         .map(|attr| {
-            let (usage_message, value_type) = match attr.path.get_ident() {
+            let (usage_message, value_type) = match attr.path().get_ident() {
                 None => return Err(SynError::new(attr.span(), "attribute should have an 'ident', and the internal filter should have protected you from it. This is a bug in rust-cef-derive crate.".to_owned()).to_compile_error()),
                 Some(ident) => match ident.to_string().as_str() {
                     "cef_ext_gobble" => (CEF_EXT_GOBBLE_USAGE.to_owned(), FieldValueType::GobbleTrait),
@@ -589,25 +591,25 @@ fn field_extraction(
 
 // Helps cut through a lot of parse tree and doesn't confuse reading-context
 fn parse_attrs_to_path(attr: &Attribute, messsage: &str) -> ParseAttrResult<Option<String>> {
-    match attr.parse_meta() {
-        Ok(parsed_meta) => match parsed_meta {
-            Meta::Path(_) => Ok(None),
-            Meta::List(ml) => match ml.nested.len() {
-                0 | 1 => match ml.nested.first() {
-                    None => Ok(None),
-                    Some(nm) => match nm {
-                        NestedMeta::Meta(Meta::Path(p)) => match p.get_ident() {
-                            Some(ident) => Ok(Some(ident.to_string())),
-                            _ => Err(SynError::new(attr.span(), messsage).to_compile_error()),
-                        },
+    match &attr.meta {
+        Meta::Path(_) => Ok(None),
+        Meta::List(_) => {
+            let nested = attr
+                .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+                .map_err(|e| e.to_compile_error())?;
+            match nested.len() {
+                0 => Ok(None),
+                1 => match nested.first() {
+                    Some(Meta::Path(p)) => match p.get_ident() {
+                        Some(ident) => Ok(Some(ident.to_string())),
                         _ => Err(SynError::new(attr.span(), messsage).to_compile_error()),
                     },
+                    _ => Err(SynError::new(attr.span(), messsage).to_compile_error()),
                 },
                 _ => Err(SynError::new(attr.span(), messsage).to_compile_error()),
-            },
-            _ => Err(SynError::new(attr.span(), messsage).to_compile_error()),
-        },
-        Err(e) => Err(e.to_compile_error()),
+            }
+        }
+        _ => Err(SynError::new(attr.span(), messsage).to_compile_error()),
     }
 }
 
@@ -695,7 +697,7 @@ fn field_value<T: quote::ToTokens>(
 fn top_level_cef_ext_values(attrs: &[Attribute]) -> Vec<TokenStream2> {
     let mut retval = vec![];
     for attr in attrs {
-        match attr.path.get_ident().map(|x| x.to_string()).as_deref() {
+        match attr.path().get_ident().map(|x| x.to_string()).as_deref() {
             None => continue,
             Some("cef_ext_values") => match parse_attrs_to_name_value(attr, CEF_EXT_VALUES_USAGE) {
                 Err(ts) => retval.push(ts.clone()),
@@ -703,20 +705,23 @@ fn top_level_cef_ext_values(attrs: &[Attribute]) -> Vec<TokenStream2> {
                     for mnv in mnvs {
                         match mnv.path.get_ident() {
                             None => retval.push(
-                                SynError::new(mnv.lit.span(), CEF_EXT_VALUES_USAGE.to_owned())
+                                SynError::new(mnv.value.span(), CEF_EXT_VALUES_USAGE.to_owned())
                                     .to_compile_error(),
                             ),
-                            Some(keyident) => match &mnv.lit {
-                                Lit::Str(strval) => {
+                            Some(keyident) => match expr_to_lit_str(&mnv.value) {
+                                Some(strval) => {
                                     let key = keyident.to_string();
                                     let val = strval.value();
                                     retval.push(quote! {
                                         collector.insert(#key.to_owned(), #val.to_owned());
                                     })
                                 }
-                                _ => retval.push(
-                                    SynError::new(mnv.lit.span(), CEF_EXT_VALUES_USAGE.to_owned())
-                                        .to_compile_error(),
+                                None => retval.push(
+                                    SynError::new(
+                                        mnv.value.span(),
+                                        CEF_EXT_VALUES_USAGE.to_owned(),
+                                    )
+                                    .to_compile_error(),
                                 ),
                             },
                         }
