@@ -40,6 +40,35 @@ pub type CefResult = Result<String, CefConversionError>;
 // provides proper context vs doing Option
 pub type CefExtensionsResult = Result<(), CefConversionError>;
 
+/// Escapes a value for use in a CEF header field: `\` becomes `\\` and `|` becomes `\|`.
+pub fn escape_header(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '|' => out.push_str("\\|"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Escapes a value for use in a CEF extension: `\` becomes `\\`, `=` becomes `\=`,
+/// and newline / carriage return become the two-character sequences `\n` / `\r`.
+pub fn escape_extension_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '=' => out.push_str("\\="),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// A trait that returns the "Version" CEF Header
 pub trait CefHeaderVersion {
     fn cef_header_version(&self) -> CefResult;
@@ -105,7 +134,7 @@ pub trait ToCef:
         // make it into key=value strings
         let mut kvstrs: Vec<String> = extensions
             .into_iter()
-            .map(|(key, value)| [key, value].join("="))
+            .map(|(key, value)| [key, escape_extension_value(&value)].join("="))
             .collect();
 
         kvstrs.sort_unstable();
@@ -115,19 +144,19 @@ pub trait ToCef:
 
         let mut cef_entry = String::new();
         cef_entry.push_str("CEF:");
-        cef_entry.push_str(&self.cef_header_version()?);
+        cef_entry.push_str(&escape_header(&self.cef_header_version()?));
         cef_entry.push('|');
-        cef_entry.push_str(&self.cef_header_device_vendor()?);
+        cef_entry.push_str(&escape_header(&self.cef_header_device_vendor()?));
         cef_entry.push('|');
-        cef_entry.push_str(&self.cef_header_device_product()?);
+        cef_entry.push_str(&escape_header(&self.cef_header_device_product()?));
         cef_entry.push('|');
-        cef_entry.push_str(&self.cef_header_device_version()?);
+        cef_entry.push_str(&escape_header(&self.cef_header_device_version()?));
         cef_entry.push('|');
-        cef_entry.push_str(&self.cef_header_device_event_class_id()?);
+        cef_entry.push_str(&escape_header(&self.cef_header_device_event_class_id()?));
         cef_entry.push('|');
-        cef_entry.push_str(&self.cef_header_name()?);
+        cef_entry.push_str(&escape_header(&self.cef_header_name()?));
         cef_entry.push('|');
-        cef_entry.push_str(&self.cef_header_severity()?);
+        cef_entry.push_str(&escape_header(&self.cef_header_severity()?));
         cef_entry.push('|');
         cef_entry.push_str(extensionsstr.as_str());
 
@@ -296,5 +325,80 @@ mod test {
 
         let rt = maybe_rt.unwrap();
         assert_eq!(rt, "3435315515325");
+    }
+
+    struct EscapeExample {}
+    impl ToCef for EscapeExample {}
+    impl CefHeaderVersion for EscapeExample {
+        fn cef_header_version(&self) -> CefResult {
+            Ok("0".to_owned())
+        }
+    }
+    impl CefHeaderDeviceVendor for EscapeExample {
+        fn cef_header_device_vendor(&self) -> CefResult {
+            Ok("ven|dor".to_owned())
+        }
+    }
+    impl CefHeaderDeviceProduct for EscapeExample {
+        fn cef_header_device_product(&self) -> CefResult {
+            Ok("back\\slash".to_owned())
+        }
+    }
+    impl CefHeaderDeviceVersion for EscapeExample {
+        fn cef_header_device_version(&self) -> CefResult {
+            Ok("V1".to_owned())
+        }
+    }
+    impl CefHeaderDeviceEventClassID for EscapeExample {
+        fn cef_header_device_event_class_id(&self) -> CefResult {
+            Ok("a\\|b".to_owned())
+        }
+    }
+    impl CefHeaderName for EscapeExample {
+        fn cef_header_name(&self) -> CefResult {
+            Ok("x|y|10|evil=1".to_owned())
+        }
+    }
+    impl CefHeaderSeverity for EscapeExample {
+        fn cef_header_severity(&self) -> CefResult {
+            Ok("10".to_owned())
+        }
+    }
+    impl CefExtensions for EscapeExample {
+        fn cef_extensions(&self, collector: &mut HashMap<String, String>) -> CefExtensionsResult {
+            collector.insert("eq".to_owned(), "a=b".to_owned());
+            collector.insert("bs".to_owned(), "c\\d".to_owned());
+            collector.insert("nl".to_owned(), "line1\nline2\rline3".to_owned());
+            collector.insert("pipe".to_owned(), "p|q".to_owned());
+            collector.insert("forge".to_owned(), "x suser=root".to_owned());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_header_escaping() {
+        let result = EscapeExample {}.to_cef().unwrap();
+        assert!(
+            result
+                .starts_with("CEF:0|ven\\|dor|back\\\\slash|V1|a\\\\\\|b|x\\|y\\|10\\|evil=1|10|"),
+            "{}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_extension_escaping() {
+        let result = EscapeExample {}.to_cef().unwrap();
+        let ext = result.rsplit_once("|10|").unwrap().1;
+        assert_eq!(
+            ext,
+            "bs=c\\\\d eq=a\\=b forge=x suser\\=root nl=line1\\nline2\\rline3 pipe=p|q"
+        );
+    }
+
+    #[test]
+    fn test_escape_helpers() {
+        assert_eq!(escape_header("a|b\\c"), "a\\|b\\\\c");
+        assert_eq!(escape_extension_value("a=b\\c\n\r|"), "a\\=b\\\\c\\n\\r|");
     }
 }
